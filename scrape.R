@@ -3,19 +3,36 @@ library (rvest)
 library (httr)
 library (stringr)
 
+############################
+#
+# INITIALIZE IMPORTANT VARIABLES ELSE NONE OF THIS WORKS
+#
+############################
+
 isbnList <- c() # declare an empty list to store isbns
 starC <- c ("one", "two", "three", "four", "five") # this is for getting all each individual star type review
 filterC <- c ("&sortBy=recent", "&sortBy=helpful") # this is for two categories
-user_a <- user_agent ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.3.1 Safari/605.1.1")
-#set_config (use_proxy(url="201.71.2.177", port = 999)) # YOU NEED A FREE PROXY OR YOUR MAIN IP GETS BANNED
+Reviews <- c (NA)
+Stars <- c (NA)
+df = data.frame (Reviews, Stars)
 
-for (i in 1:75) # ive seen certain searches be able to produce 75 pages but this link only allows 50
+# network related functions to try to avoid amazon blocks
+userA <- "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.3"
+set_config (use_proxy (url = "35.185.196.38", port = 3128)) # YOU NEED A FREE PROXY OR YOUR MAIN IP GETS BANNED
+
+############################
+# 
+# GENERATE LIST OF BOOKS IN ORDER TO SCRAPE THEIR REVIEWS
+#
+############################
+
+for (i in 1:75) # for 75 pages get all books per page
 {
   Sys.sleep (3)
-  urlSearchBooks <- paste0  ("https://www.amazon.com/s?k=book&i=stripbooks&s=review-count-rank&page=", i, "&crid=31ZFA7WH3ZCE6&qid=1710631307&sprefix=bo%2Cstripbooks%2C126&ref=sr_pg_", i)
-  doc <- session (urlSearchBooks, user_a)
+  urlSearchBooks <- paste0 ("https://www.amazon.com/s?k=book&i=stripbooks&s=review-count-rank&page=", i, "&crid=31ZFA7WH3ZCE6&qid=1710631307&sprefix=bo%2Cstripbooks%2C126&ref=sr_pg_", i)
+  doc <- session (urlSearchBooks, user_agent(userA))
   doc %>% html_nodes ("[class='a-link-normal s-no-outline']") -> listOfBooks
-
+  
   for (j in listOfBooks) # look for /dp/ then get that ASIN number, toss out the rest
   {
     bookUrl <- toString (j)
@@ -25,11 +42,11 @@ for (i in 1:75) # ive seen certain searches be able to produce 75 pages but this
   }
 }
 
-for (i in 1:100)
+for (i in 1:100) # for 100 pages get all books per page
 {
   Sys.sleep (3)
   urlSearchBooks <- paste0 ("https://www.amazon.com/s?k=computer&i=stripbooks&rh=n%3A3508&s=review-count-rank&page=", i, "&qid=1710724565&ref=sr_pg_", i)
-  doc <- session (urlSearchBooks), user_a)
+  doc <- session (urlSearchBooks, user_agent(userA))
   doc %>% html_nodes ("[class='a-link-normal s-no-outline']") -> listOfBooks
 
   for (j in listOfBooks) 
@@ -43,22 +60,37 @@ for (i in 1:100)
 
 isbnList <- unique (isbnList) # make sure that duplicate books are not in the list
 
+############################
+#
+# SCRAPE FUNCTION THAT RETURNS ALL 10 REVIEWS PER REVIEW PAGE
+#
+############################
+
 scrape <- function (ASIN, pageNum, starIter, tagIter)
 {
   url_reviews <- paste0("https://www.amazon.com/product-reviews/", ASIN ,"/ref=cm_cr_arp_d_viewopt_sr?pageNumber=", pageNum, "&filterByStar=", starIter, "_star", tagIter)
   doc <- read_html (url_reviews) # catch the 404 right here
+  print (doc)
   doc %>% html_nodes ("[data-hook='review-body']") %>% html_text() -> review_text
-  doc %>% html_nodes ("[data-hook='review-star-rating']") %>%html_text() -> review_star
- 
+  doc %>% html_nodes ("[data-hook='review-star-rating']") %>% html_text() -> review_star
+  
   doc %>%  html_element ("title") %>% html_text() -> output # DEBUG ONLY: this has no real impact to the scraping it can be deleted
   print (output) #DEBUG ONLY: notice the amazon sign in page which means that amazon blocked iterative scraping
   
   tibble (review_text, review_star) %>% return()
 }
 
-Reviews <- c (NA)
-Stars <- c (NA)
-df = data.frame (Reviews, Stars)
+############################
+#
+# FOR EVERY BOOK
+#   FOR EVERY CATEGORY FILTER
+#     FOR EVERY STAR RATING FROM 1-5
+#       FOR EVERY PAGE 1-10
+#         SCRAPE 10 REVIEWS AND PUT IT INTO TEMP SO IT CAN BE WRITTEN TO A FILE
+#
+############################
+
+progress <- 0
 
 for (book in isbnList)
 {
@@ -69,7 +101,7 @@ for (book in isbnList)
       for (i in 1:10) # it will not work past page 1 due to amazon blocks
       {
         print (paste0 ("ON BOOK: ", book, " |ON TAG: ", tag, " |ON STAR: ", iter, " |ON PAGE: ", i))
-        Sys.sleep(1)
+        #Sys.sleep(1)
         redFlag <- FALSE
         temp <- tryCatch (scrape (ASIN = toString (book), pageNum = i, starIter = iter, tagIter = tag), error = function (e) {redFlag <<- TRUE}) 
         print(redFlag)
@@ -78,10 +110,11 @@ for (book in isbnList)
         {
           next
         }
-
+        
         if (dim(temp)[1] == 0) # if the x dimension (so any row) is 0 then stop scraping that url
         {
           break # this has to be here because amazon will redirect on page 2-10 for no real reason
+                # i want to use next but it will just waste time
         }
         
         df2 <- data.frame (temp$review_text, temp$review_star)
@@ -90,7 +123,9 @@ for (book in isbnList)
       }
     }
   }
+  
+  progress <- progress + 1
 }
 
-write.csv (df, "output6.csv")
+write.csv (df, "output9.csv")
 print ("FINISHED SUCCESSFULLY")
